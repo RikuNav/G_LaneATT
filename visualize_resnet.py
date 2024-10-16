@@ -17,8 +17,6 @@ img_tensor = transform(img).unsqueeze(0)
 
 feature_volume = laneatt.forward(img_tensor).squeeze().permute(1, 2, 0).detach().numpy()
 
-print(feature_volume.shape)
-
 plt.imshow(feature_volume)
 plt.axis('off')
 plt.show()
