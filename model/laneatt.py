@@ -25,7 +25,6 @@ class LaneATT():
         self.anchor_cut_ys = torch.linspace(1, 0, steps=self.fmap_h, dtype=torch.float32)
 
         self.anchors, self.anchors_cut = self.generate_anchors(lateral_n=72, bottom_n=128)
-        print(self.anchors.shape, self.anchors_cut.shape)
 
     @property
     def backbone(self):
@@ -46,7 +45,7 @@ class LaneATT():
         feature_map = self.backbone(x) # ResNet backbone Feature Volume
         pooled_map = nn.Conv2d(feature_map.shape[1], self.anchor_feat_channels, kernel_size=1)(feature_map) # Dimensionality Reduction Feature Volume
         #anchors, anchors_cut = self.cut_anchor_features(pooled_map)
-        return x
+        return pooled_map
     
     def cut_anchor_features(self, feature_volume):
         # batch_size = feature_volume.shape[0]
@@ -96,6 +95,7 @@ class LaneATT():
         anchor[5:] = (start_x + (1 - anchor_ys - 1 + start_y) / np.tan(angle)) * self.img_w
 
         return anchor
-    
-laneatt = LaneATT('resnet101')
-laneatt.forward(torch.randn(1, 3, 640, 320))
+
+if __name__ == '__main__':
+    laneatt = LaneATT('resnet101')
+    laneatt.forward(torch.randn(1, 3, 640, 320))  
