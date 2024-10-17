@@ -9,7 +9,7 @@ laneatt = LaneATT()
 
 anchors = laneatt.generate_anchors(lateral_n=72, bottom_n=128)[0]
 
-img = Image.open('model/inv.jpg')
+img = Image.open('model/inv2.jpg')
 img_width, img_height = img.size
 
 plt.imshow(img)

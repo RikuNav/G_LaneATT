@@ -1,0 +1,20 @@
+backbone: resnet18
+
+# Feature Volume Channels
+feature_volume_channels: 64
+
+# Set the Anchor Steps
+anchor_steps:
+  y: 72
+  x: 128
+
+# Image Dimensions
+image_size:
+  width: 640
+  height: 360
+
+# Angles for the Anchor Proposals (Sames as used in LineCNN)
+anchor_angles:
+  left: [72., 60., 49., 39., 30., 22.]
+  right: [108., 120., 131., 141., 150., 158.]
+  bottom: [165., 150., 141., 131., 120., 108., 100., 90., 80., 72., 60., 49., 39., 30., 15.]

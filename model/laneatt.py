@@ -1,101 +1,145 @@
-import numpy as np
 import os 
 import torch
 import yaml
 
-import torch.nn as nn
+from anchors import generate_anchors, compute_anchor_cut_indices
 from torchvision import models
 
 class LaneATT():
-    def __init__(self, backbone='resnet18', anchor_feat_channels=64, S=72, img_size=(640, 360)) -> None:
-        self.config = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), 'laneatt_config.yaml'))) # Load config file
-        self.backbone = backbone # Set backbone
-        self.anchor_feat_channels = anchor_feat_channels # Set anchor feature channels
-        self.n_offsets = S # Number of offsets
+    def __init__(self, config_file=os.path.join(os.path.dirname(__file__), 'config', 'laneatt.yaml')) -> None:
+        # Load LaneATT config file
+        self.__laneatt_config = yaml.safe_load(open(config_file))
+        # Load backbones config file
+        self.__backbones_config = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), 'config', 'backbones.yaml')))
+        # Set anchor feature channels
+        self.__feature_volume_channels = self.__laneatt_config['feature_volume_channels']
+        # Set anchor y steps
+        self.__anchor_y_steps = self.__laneatt_config['anchor_steps']['y']
+        # Set anchor x steps
+        self.__anchor_x_steps = self.__laneatt_config['anchor_steps']['x']
+        # Set image width
+        self.__img_w = self.__laneatt_config['image_size']['width']
+        # Set image height
+        self.__img_h = self.__laneatt_config['image_size']['height']
+        # Create anchor feature dimensions variables but they will be defined after the backbone is created
+        self.__feature_volume_height = None
+        self.__feature_volume_width = None
 
-        # Image size
-        self.img_w, self.img_h = img_size
+        # Set device
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # Creates the backbone and moves it to the device
+        self.backbone = self.__laneatt_config['backbone']
 
-        # Anchor angles, same ones used in Line-CNN
-        self.left_angles = [72., 60., 49., 39., 30., 22.]
-        self.right_angles = [108., 120., 131., 141., 150., 158.]
-        self.bottom_angles = [165., 150., 141., 131., 120., 108., 100., 90., 80., 72., 60., 49., 39., 30., 15.]
+        # Generate Anchors Proposals
+        self.__anchors_image, self.__anchors_feature_volume = generate_anchors(lateral_n=self.__anchor_y_steps, 
+                                                                                bottom_n=self.__anchor_x_steps,
+                                                                                left_angles=self.__laneatt_config['anchor_angles']['left'],
+                                                                                right_angles=self.__laneatt_config['anchor_angles']['right'],
+                                                                                bottom_angles=self.__laneatt_config['anchor_angles']['bottom'],
+                                                                                y_steps=self.__anchor_y_steps,
+                                                                                feature_map_height=self.__feature_volume_height)
+        
+        # PreCompute Indices for the Anchor Pooling
+        self.__anchors_z_cut_indices, self.__anchors_y_cut_indices, self.__anchors_x_cut_indices = compute_anchor_cut_indices(self.__anchors_feature_volume,
+                                                                                                                                self.__feature_volume_channels, 
+                                                                                                                                self.__feature_volume_height, 
+                                                                                                                                self.__feature_volume_width)
 
-        self.anchor_ys = torch.linspace(1, 0, steps=self.n_offsets, dtype=torch.float32)
-        self.anchor_cut_ys = torch.linspace(1, 0, steps=self.fmap_h, dtype=torch.float32)
-
-        self.anchors, self.anchors_cut = self.generate_anchors(lateral_n=72, bottom_n=128)
+    def __call__(self, x):
+        return self.forward(x)
 
     @property
     def backbone(self):
-        return self._backbone # Backbone Getter
+        """
+            Getter for backbone
+
+            Args:
+                None
+
+            Returns:
+                torch.nn.Sequential: Pretrained backbone
+        """
+        return self.__backbone
     
     @backbone.setter
     def backbone(self, value):
-        value = value.lower()
-        # Check if value is in the list of backbones in config file
-        if value not in self.config['backbones']:
-            raise ValueError(f'Backbone must be one of {self.config['backbones']}')
-        # Set pretrained backbone according to pytorch requirements without the average pooling and fully connected layer
-        self._backbone = torch.nn.Sequential(*list(models.__dict__[value](weights=f'{value.replace('resnet', 'ResNet')}_Weights.DEFAULT').children())[:-2])
-        self.fmap_h = self._backbone(torch.randn(1, 3, 224, 224)).shape[2] # Feature Map Height
+        """
+            Setter for backbone
 
+            Args:
+                value (str): Backbone name
+
+            Returns:
+                None
+        """
+        # Lower the value to avoid case sensitivity
+        value = value.lower()
+
+        # Check if value is in the list of backbones in config file
+        if value not in self.__backbones_config['backbones']:
+            raise ValueError(f'Backbone must be one of {self.config['backbones']}')
+        
+        # Set pretrained backbone according to pytorch requirements without the average pooling and fully connected layer
+        self.__backbone = torch.nn.Sequential(*list(models.__dict__[value](weights=f'{value.replace('resnet', 'ResNet')}_Weights.DEFAULT').children())[:-2],)
+
+        # Runs backbone (on cpu) once to get output data 
+        backbone_dimensions = self.__backbone(torch.randn(1, 3, self.__img_h, self.__img_w)).shape
+
+        # Extracts feature volume height and width
+        self.__feature_volume_height = backbone_dimensions[2]
+        self.__feature_volume_width = backbone_dimensions[3]
+
+        # Join the backbone and the convolutional layer for dimensionality reduction
+        self.__backbone = torch.nn.Sequential(self.__backbone, torch.nn.Conv2d(backbone_dimensions[1], self.__feature_volume_channels, kernel_size=1))
+
+        # Move the model to the device
+        self.__backbone.to(self.device)
 
     def forward(self, x):
-        feature_map = self.backbone(x) # ResNet backbone Feature Volume
-        pooled_map = nn.Conv2d(feature_map.shape[1], self.anchor_feat_channels, kernel_size=1)(feature_map) # Dimensionality Reduction Feature Volume
-        #anchors, anchors_cut = self.cut_anchor_features(pooled_map)
-        return pooled_map
+        """
+            Forward pass of the model
+
+            Args:
+                x (torch.Tensor): Input image
+        """
+        # Move the input to the device
+        x = x.to(self.device)
+        # Gets the feature volume from the backbone with a dimensionality reduction layer
+        feature_volumes = self.backbone(x)
+        
+        #batch_anchor_features = self.cut_anchor_features(feature_volumes)
+        #print(batch_anchor_features.shape)
+        
     
-    def cut_anchor_features(self, feature_volume):
-        # batch_size = feature_volume.shape[0]
-        # n_proposals = len(self.anchors)
-        pass
+    def cut_anchor_features(self, feature_volumes):
+        """
+            Cuts anchor features from the feature volumes
 
-    def generate_anchors(self, lateral_n, bottom_n):
-        left_anchors, left_cut = self.generate_side_anchors(self.left_angles, x=0., nb_origins=lateral_n)
-        right_anchors, right_cut = self.generate_side_anchors(self.right_angles, x=1., nb_origins=lateral_n)
-        bottom_anchors, bottom_cut = self.generate_side_anchors(self.bottom_angles, y=1., nb_origins=bottom_n)
+            Args:
+                feature_volumes (torch.Tensor): Feature volumes
+        """
 
-        return torch.cat([left_anchors, bottom_anchors, right_anchors]), torch.cat([left_cut, bottom_cut, right_cut])
+        # Gets the batch size
+        batch_size = feature_volumes.shape[0]
+        # Gets the number of anchor proposals
+        anchor_proposals = len(self.anchors)
+        # Gets the number of channels in the feature volume
+        feature_volume_channels = feature_volumes.shape[1]
+        # Builds a tensor to store the anchor features for each batch
+        batch_anchor_features = torch.zeros((batch_size, anchor_proposals, feature_volume_channels, self.feature_map_height, 1), 
+                                            device=self.device)
+        
+        # Iterates over each batch
+        for batch_idx, feature_volume in enumerate(feature_volumes):
+            # Extracts from each anchor proposal pixels in each feature map the feature volume values and transforms them into a tensor
+            rois = feature_volume[self.cut_zs, self.cut_ys, self.cut_xs].view(len(self.anchors_cut), self.anchor_feat_channels, self.feature_map_height, 1)
+            # Sets to zero the anchor proposals that are outside the feature map
+            rois[self.invalid_mask] = 0
+            # Assigns the anchor features to the batch anchor features tensor
+            batch_anchor_features[batch_idx] = rois
+
+        return batch_anchor_features
     
-    def generate_side_anchors(self, angles, nb_origins, x=None, y=None):
-        if x is None and y is not None:
-            starts = [(x, y) for x in np.linspace(1., 0., num=nb_origins)]
-        elif x is not None and y is None:
-            starts = [(x, y) for y in np.linspace(1., 0., num=nb_origins)]
-        else:
-            raise Exception('Please define exactly one of `x` or `y` (not neither nor both)')
-
-        n_anchors = nb_origins * len(angles)
-
-        # each row, first for x and second for y:
-        # 2 scores, 1 start_y, start_x, 1 lenght, S coordinates, score[0] = negative prob, score[1] = positive prob
-        anchors = torch.zeros((n_anchors, 2 + 2 + 1 + self.n_offsets))
-        anchors_cut = torch.zeros((n_anchors, 2 + 2 + 1 + self.fmap_h))
-        for i, start in enumerate(starts):
-            for j, angle in enumerate(angles):
-                k = i * len(angles) + j
-                anchors[k] = self.generate_anchor(start, angle)
-                anchors_cut[k] = self.generate_anchor(start, angle, cut=True)
-
-        return anchors, anchors_cut
-    
-    def generate_anchor(self, start, angle, cut=False):
-        if cut:
-            anchor_ys = self.anchor_cut_ys
-            anchor = torch.zeros(2 + 2 + 1 + self.fmap_h)
-        else:
-            anchor_ys = self.anchor_ys
-            anchor = torch.zeros(2 + 2 + 1 + self.n_offsets)
-        angle = angle * np.pi / 180.  # degrees to radians
-        start_x, start_y = start
-        anchor[2] = 1 - start_y
-        anchor[3] = start_x
-        anchor[5:] = (start_x + (1 - anchor_ys - 1 + start_y) / np.tan(angle)) * self.img_w
-
-        return anchor
-
 if __name__ == '__main__':
-    laneatt = LaneATT('resnet101')
-    laneatt.forward(torch.randn(1, 3, 640, 320))  
+    laneatt = LaneATT()
+    laneatt(torch.randn(1, 3, 360, 640))
