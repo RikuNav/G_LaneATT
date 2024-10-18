@@ -29,6 +29,8 @@ class LaneATT():
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # Creates the backbone and moves it to the device
         self.backbone = self.__laneatt_config['backbone']
+        # Create the convolutional layer for dimensionality reduction
+        self.conv = torch.nn.Conv2d()
 
         # Generate Anchors Proposals
         self.__anchors_image, self.__anchors_feature_volume = generate_anchors(lateral_n=self.__anchor_y_steps, 
@@ -40,7 +42,7 @@ class LaneATT():
                                                                                 feature_map_height=self.__feature_volume_height)
         
         # PreCompute Indices for the Anchor Pooling
-        self.__anchors_z_cut_indices, self.__anchors_y_cut_indices, self.__anchors_x_cut_indices = compute_anchor_cut_indices(self.__anchors_feature_volume,
+        self.__anchors_z_cut_indices, self.__anchors_y_cut_indices, self.__anchors_x_cut_indices, self.__invalid_mask = compute_anchor_cut_indices(self.__anchors_feature_volume,
                                                                                                                                 self.__feature_volume_channels, 
                                                                                                                                 self.__feature_volume_height, 
                                                                                                                                 self.__feature_volume_width)
@@ -106,7 +108,10 @@ class LaneATT():
         x = x.to(self.device)
         # Gets the feature volume from the backbone with a dimensionality reduction layer
         feature_volumes = self.backbone(x)
-        
+
+        # Cuts the anchor features from the feature volumes
+        batch_anchor_features = self.cut_anchor_features(feature_volumes)
+
         #batch_anchor_features = self.cut_anchor_features(feature_volumes)
         #print(batch_anchor_features.shape)
         
@@ -122,19 +127,19 @@ class LaneATT():
         # Gets the batch size
         batch_size = feature_volumes.shape[0]
         # Gets the number of anchor proposals
-        anchor_proposals = len(self.anchors)
+        anchor_proposals = len(self.__anchors_image)
         # Gets the number of channels in the feature volume
         feature_volume_channels = feature_volumes.shape[1]
         # Builds a tensor to store the anchor features for each batch
-        batch_anchor_features = torch.zeros((batch_size, anchor_proposals, feature_volume_channels, self.feature_map_height, 1), 
+        batch_anchor_features = torch.zeros((batch_size, anchor_proposals, feature_volume_channels, self.__feature_volume_height, 1), 
                                             device=self.device)
         
         # Iterates over each batch
         for batch_idx, feature_volume in enumerate(feature_volumes):
             # Extracts from each anchor proposal pixels in each feature map the feature volume values and transforms them into a tensor
-            rois = feature_volume[self.cut_zs, self.cut_ys, self.cut_xs].view(len(self.anchors_cut), self.anchor_feat_channels, self.feature_map_height, 1)
+            rois = feature_volume[self.__anchors_z_cut_indices, self.__anchors_y_cut_indices, self.__anchors_x_cut_indices].view(len(self.__anchors_feature_volume), self.__feature_volume_channels, self.__feature_volume_height, 1)
             # Sets to zero the anchor proposals that are outside the feature map
-            rois[self.invalid_mask] = 0
+            rois[self.__invalid_mask] = 0
             # Assigns the anchor features to the batch anchor features tensor
             batch_anchor_features[batch_idx] = rois
 

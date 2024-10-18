@@ -123,7 +123,7 @@ def generate_anchor(start, angle, y_steps, feature_map_height, cut=False):
 
     return anchor
 
-def compute_anchor_cut_indices(anchors_feature_volume, feature_map_channels, feature_map_height, feature_map_width):
+def  compute_anchor_cut_indices(anchors_feature_volume, feature_map_channels, feature_map_height, feature_map_width):
         """
             Computes anchor cut indices
 
@@ -152,6 +152,10 @@ def compute_anchor_cut_indices(anchors_feature_volume, feature_map_channels, fea
         # Clamp the anchors coordinates to the feature map width
         anchors_x_cut_indices = torch.clamp(anchors_x_cut_indices, 0, feature_map_width - 1)
 
+        # Generate invalid mask for anchors that are outside the feature map
+        invalid_mask = (anchors_x_cut_indices < 0) | (anchors_x_cut_indices > feature_map_width - 1)
+
+
         # Generate y coordinates for each anchor point
         anchors_y_cut_indices = torch.arange(0, feature_map_height)
         # Repeat the y coordinates for each feature map and each proposal and puts them in a single dimension
@@ -160,4 +164,4 @@ def compute_anchor_cut_indices(anchors_feature_volume, feature_map_channels, fea
         # Generate z coordinates for each anchor proposal and puts them in a single dimension
         anchors_z_cut_indices = torch.arange(feature_map_channels).repeat_interleave(feature_map_height).repeat(n_proposals).reshape(-1, 1)
 
-        return anchors_z_cut_indices, anchors_y_cut_indices, anchors_x_cut_indices
+        return anchors_z_cut_indices, anchors_y_cut_indices, anchors_x_cut_indices, invalid_mask
