@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-def generate_anchors(lateral_n, bottom_n, left_angles, right_angles, bottom_angles, y_steps, feature_map_height):
+def generate_anchors(lateral_n, bottom_n, left_angles, right_angles, bottom_angles, y_steps, feature_volume_height):
     """
         Generates anchors for the model
 
@@ -12,7 +12,7 @@ def generate_anchors(lateral_n, bottom_n, left_angles, right_angles, bottom_angl
             right_angles (list): List of right angles
             bottom_angles (list): List of bottom angles
             y_steps (int): Number of steps in y direction
-            feature_map_height (int): Height of the feature map
+            feature_volume_height (int): Height of the feature map
             img_w (int): Image width
 
         Returns:
@@ -21,16 +21,16 @@ def generate_anchors(lateral_n, bottom_n, left_angles, right_angles, bottom_angl
     """
 
     # Generate left anchors
-    left_anchors, left_cut = generate_side_anchors(left_angles, lateral_n, y_steps, feature_map_height, x=0.)
+    left_anchors, left_cut = generate_side_anchors(left_angles, lateral_n, y_steps, feature_volume_height, x=0.)
     # Generate right anchors
-    right_anchors, right_cut = generate_side_anchors(right_angles, lateral_n, y_steps, feature_map_height, x=1.)
+    right_anchors, right_cut = generate_side_anchors(right_angles, lateral_n, y_steps, feature_volume_height, x=1.)
     # Generate bottom anchors
-    bottom_anchors, bottom_cut = generate_side_anchors(bottom_angles, bottom_n, y_steps, feature_map_height, y=1.)
+    bottom_anchors, bottom_cut = generate_side_anchors(bottom_angles, bottom_n, y_steps, feature_volume_height, y=1.)
 
     # Concatenate anchors and cut anchors
     return torch.cat([left_anchors, bottom_anchors, right_anchors]), torch.cat([left_cut, bottom_cut, right_cut]) 
 
-def generate_side_anchors(angles, nb_origins, y_steps, feature_map_height, x=None, y=None,):
+def generate_side_anchors(angles, nb_origins, y_steps, feature_volume_height, x=None, y=None,):
     """
         Generates side anchors based on predefined angles, number of origins and coordinate
 
@@ -38,7 +38,7 @@ def generate_side_anchors(angles, nb_origins, y_steps, feature_map_height, x=Non
             angles (list): List of angles
             nb_origins (int): Number of origins
             y_steps (int): Number of steps in y direction
-            feature_map_height (int): Height of the feature map
+            feature_volume_height (int): Height of the feature map
             img_w (int): Image width
             x (float): X coordinate
             y (float): Y coordinate
@@ -65,7 +65,7 @@ def generate_side_anchors(angles, nb_origins, y_steps, feature_map_height, x=Non
     # Initialize anchors and cut anchors as a tensor of n_anchors as rows and (offsets or feature map height + 5) as columns.
     # This represents each anchor list will have 2 scores, 1 start y, 1 start x, 1 length and n_offsets or feature map height
     anchors = torch.zeros((n_anchors, 2 + 2 + 1 + y_steps))
-    anchors_cut = torch.zeros((n_anchors, 2 + 2 + 1 + feature_map_height))
+    anchors_cut = torch.zeros((n_anchors, 2 + 2 + 1 + feature_volume_height))
 
     # Iterates over each start point
     for i, start in enumerate(starts):
@@ -74,12 +74,12 @@ def generate_side_anchors(angles, nb_origins, y_steps, feature_map_height, x=Non
             # Calculates the index of the anchor
             k = i * len(angles) + j
             # Generates the anchor and cut anchor
-            anchors[k] = generate_anchor(start, angle, y_steps, feature_map_height,)
-            anchors_cut[k] = generate_anchor(start, angle, y_steps, feature_map_height, cut=True)
+            anchors[k] = generate_anchor(start, angle, y_steps, feature_volume_height,)
+            anchors_cut[k] = generate_anchor(start, angle, y_steps, feature_volume_height, cut=True)
 
     return anchors, anchors_cut
 
-def generate_anchor(start, angle, y_steps, feature_map_height, cut=False):
+def generate_anchor(start, angle, y_steps, feature_volume_height, cut=False):
     """
         Generates anchor based on start point and angle
 
@@ -87,7 +87,7 @@ def generate_anchor(start, angle, y_steps, feature_map_height, cut=False):
             start (tuple): Start point
             angle (float): Angle
             y_steps (int): Number of steps in y direction
-            feature_map_height (int): Height of the feature map
+            feature_volume_height (int): Height of the feature map
             img_w (int): Image width
             cut (bool): If cut
 
@@ -98,9 +98,9 @@ def generate_anchor(start, angle, y_steps, feature_map_height, cut=False):
     # Check if cut is True
     if cut:
         # Set anchor y coordinates from 1 to 0 with feature map height steps
-        anchor_ys = torch.linspace(1, 0, steps=feature_map_height, dtype=torch.float32)
+        anchor_ys = torch.linspace(1, 0, steps=feature_volume_height, dtype=torch.float32)
         # Initialize anchor tensor with 2 scores, 1 start y, 1 start x, 1 length and feature map height
-        anchor = torch.zeros(2 + 2 + 1 + feature_map_height)
+        anchor = torch.zeros(2 + 2 + 1 + feature_volume_height)
     else:
         # Set anchor y coordinates from 1 to 0 with n_offsets steps
         anchor_ys = torch.linspace(1, 0, steps=y_steps, dtype=torch.float32)
@@ -123,15 +123,15 @@ def generate_anchor(start, angle, y_steps, feature_map_height, cut=False):
 
     return anchor
 
-def compute_anchor_cut_indices(anchors_feature_volume, feature_map_channels, feature_map_height, feature_map_width):
+def compute_anchor_cut_indices(anchors_feature_volume, feature_map_channels, feature_volume_height, feature_volume_width):
         """
             Computes anchor cut indices
 
             Args:
                 anchors_cut (torch.Tensor): Cut anchors
                 feature_map_channels (int): Number of feature map channels
-                feature_map_height (int): Height of the feature map
-                feature_map_width (int): Width of the feature map
+                feature_volume_height (int): Height of the feature map
+                feature_volume_width (int): Width of the feature map
             
             Returns:
                 torch.Tensor: Z coordinates
@@ -144,20 +144,25 @@ def compute_anchor_cut_indices(anchors_feature_volume, feature_map_channels, fea
         # Extract only anchor points from anchors_feature_volume tensor
         anchors_x_points = anchors_feature_volume[:, 5:]
         # Remap points from 1-0 range to feature map pixels
-        anchors_x_pixels = (anchors_x_points * feature_map_width).round().long()
-        # Flip the x coordinates to get from feature_map_width->0 to 0->feature_map_width and adds a third dimension
+        anchors_x_pixels = (anchors_x_points * feature_volume_width).round().long()
+        # Flip the x coordinates to get from feature_volume_width->0 to 0->feature_volume_width and adds a third dimension
         anchors_x_pixels = torch.flip(anchors_x_pixels, dims=(1,)).unsqueeze(2)
         # Repeat the anchors proposals for each feature map and puts them in a single dimension
-        anchors_x_cut_indices = torch.repeat_interleave(anchors_x_pixels, feature_map_channels, dim=0).reshape(-1, 1)
+        unclamped_anchors_x_cut_indices = torch.repeat_interleave(anchors_x_pixels, feature_map_channels, dim=0).reshape(-1, 1)
         # Clamp the anchors coordinates to the feature map width
-        anchors_x_cut_indices = torch.clamp(anchors_x_cut_indices, 0, feature_map_width - 1)
+        anchors_x_cut_indices = torch.clamp(unclamped_anchors_x_cut_indices, 0, feature_volume_width - 1)
+        # Reshape the anchors to the original shape
+        unclamped_anchors_x_cut_indices = unclamped_anchors_x_cut_indices.reshape(n_proposals, feature_map_channels, feature_volume_height, 1)
+        
+        # Generate a binary mask to filter out the invalid anchor proposals
+        invalid_mask = (unclamped_anchors_x_cut_indices < 0) | (unclamped_anchors_x_cut_indices > feature_volume_width - 1)
 
         # Generate y coordinates for each anchor point
-        anchors_y_cut_indices = torch.arange(0, feature_map_height)
+        anchors_y_cut_indices = torch.arange(0, feature_volume_height)
         # Repeat the y coordinates for each feature map and each proposal and puts them in a single dimension
         anchors_y_cut_indices = anchors_y_cut_indices.repeat(feature_map_channels).repeat(n_proposals).reshape(-1, 1)
 
         # Generate z coordinates for each anchor proposal and puts them in a single dimension
-        anchors_z_cut_indices = torch.arange(feature_map_channels).repeat_interleave(feature_map_height).repeat(n_proposals).reshape(-1, 1)
+        anchors_z_cut_indices = torch.arange(feature_map_channels).repeat_interleave(feature_volume_height).repeat(n_proposals).reshape(-1, 1)
 
-        return anchors_z_cut_indices, anchors_y_cut_indices, anchors_x_cut_indices
+        return anchors_z_cut_indices, anchors_y_cut_indices, anchors_x_cut_indices, invalid_mask
