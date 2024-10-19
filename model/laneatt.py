@@ -45,7 +45,11 @@ class LaneATT(nn.Module):
         # Fully connected layer of the attention mechanism that takes a single anchor proposal for all the feature maps as input and outputs a score 
         # for each anchor proposal except itself. The score is computed using a softmax function.
         self.__attention_layer = nn.Sequential(nn.Linear(self.__feature_volume_channels * self.__feature_volume_height, len(self.__anchors_feature_volume) - 1),
-                                                     nn.Softmax(dim=1)).to(self.device)
+                                                nn.Softmax(dim=1)).to(self.device)
+        
+        # Convolutional layer for the classification task
+        self.__cls_layer = nn.Linear(2 * self.__feature_volume_channels * self.__feature_volume_height, 2).to(self.device)
+        self.__reg_layer = nn.Linear(2 * self.__feature_volume_channels * self.__feature_volume_height, self.__anchor_y_steps + 1).to(self.device)
         
         # Pre-Compute Indices for the Anchor Pooling
         self.__anchors_z_cut_indices, self.__anchors_y_cut_indices, self.__anchors_x_cut_indices, self.__invalid_mask = compute_anchor_cut_indices(self.__anchors_feature_volume,
@@ -128,12 +132,39 @@ class LaneATT(nn.Module):
         # This way we can have a matrix with the attention scores for each anchor proposal
         attention_matrix[non_diag_indices[:, 0], non_diag_indices[:, 1], non_diag_indices[:, 2]] = attention_scores.flatten()
 
-        # Reshape the attention matrix to the original batch size
+        # Reshape the batch anchor features to the original batch size
         batch_anchor_features = batch_anchor_features.reshape(x.shape[0], len(self.__anchors_feature_volume), -1)
         # Computes the attention features by multiplying the anchor features with the attention weights per batch
         # This will give more context based on the probability of the current anchor to be a lane line compared to other frequently co-occurring anchor proposals
+        # And adds them into a single tensor implicitly by using a matrix multiplication
         attention_features = torch.bmm(torch.transpose(batch_anchor_features, 1, 2),
                                        torch.transpose(attention_matrix, 1, 2)).transpose(1, 2)
+        
+        # Reshape the attention features batches to one batch size
+        attention_features = attention_features.reshape(-1, self.__feature_volume_channels * self.__feature_volume_height)
+        # Reshape the batch anchor features batches to one batch size
+        batch_anchor_features = batch_anchor_features.reshape(-1, self.__feature_volume_channels * self.__feature_volume_height)
+
+        # Concatenate the attention features with the anchor features
+        batch_anchor_features = torch.cat((attention_features, batch_anchor_features), dim=1)
+
+        # Predict the class of the anchor proposals
+        cls_logits = self.__cls_layer(batch_anchor_features)
+        # Predict the regression of the anchor proposals
+        reg = self.__reg_layer(batch_anchor_features)
+
+        # Undo joining the proposals from all images into proposals features batches
+        cls_logits = cls_logits.reshape(x.shape[0], -1, cls_logits.shape[1])
+        reg = reg.reshape(x.shape[0], -1, reg.shape[1])
+        
+        # Create the regression proposals
+        reg_proposals = torch.zeros((*cls_logits.shape[:2], 5 + self.__anchor_y_steps), device=x.device)
+        # Assign the anchor proposals to the regression proposals
+        reg_proposals += self.__anchors_image.to(self.device)
+        # Assign the classification scores to the regression proposals
+        reg_proposals[:, :, :2] = cls_logits
+        # Adds the regression offsets to the anchor proposals in the regression proposals
+        reg_proposals[:, :, 4:] += reg
 
     def __cut_anchor_features(self, feature_volumes):
         """
