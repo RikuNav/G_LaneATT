@@ -192,6 +192,8 @@ class LaneATT(nn.Module):
         # Adds the regression offsets to the anchor proposals in the regression proposals
         reg_proposals[:, :, 4:] += reg
 
+        return reg_proposals
+
     def __cut_anchor_features(self, feature_volumes):
         """
             Extracts anchor features from the feature volumes
@@ -225,6 +227,9 @@ class LaneATT(nn.Module):
 
         return batch_anchor_features
     
+    def __loss(self, outputs, labels, **kwargs):
+
+
     def train_model(self, resume=False):
         """
             Train the model
@@ -248,6 +253,34 @@ class LaneATT(nn.Module):
         
         epochs = self.__laneatt_config['epochs']
         train_loader = self.__get_dataloader('train')
+
+        for epoch in trange(starting_epoch, epochs + 1, initial=starting_epoch - 1, total=epochs):
+            logger.debug('Epoch [%d/%d] starting.', epoch, epochs)
+            model.train()
+            pbar = tqdm(train_loader)
+            for i, (images, labels) in enumerate(pbar):
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+
+                # Forward pass
+                outputs = model(images)
+                #loss, loss_dict_i = model.loss(outputs, labels, **loss_parameters)
+
+            #     # Backward and optimize
+            #     optimizer.zero_grad()
+            #     loss.backward()
+            #     optimizer.step()
+
+            #     # Scheduler step (iteration based)
+            #     scheduler.step()
+
+            #     # Log
+            #     postfix_dict = {key: float(value) for key, value in loss_dict_i.items()}
+            #     postfix_dict['lr'] = optimizer.param_groups[0]["lr"]
+            #     self.exp.iter_end_callback(epoch, max_epochs, i, len(train_loader), loss.item(), postfix_dict)
+            #     postfix_dict['loss'] = loss.item()
+            #     pbar.set_postfix(ordered_dict=postfix_dict)
+            # self.exp.epoch_end_callback(epoch, max_epochs, model, optimizer, scheduler)
 
     def __get_dataloader(self, split):
         # Create the dataset object based on TuSimple architecture

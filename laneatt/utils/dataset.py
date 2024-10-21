@@ -3,8 +3,10 @@ import json
 import random
 import logging
 import numpy as np
+import cv2
 
 from torch.utils.data import Dataset
+from torchvision.transforms import ToTensor
 from scipy.interpolate import InterpolatedUnivariateSpline
 
 SPLIT_FILES = {
@@ -156,7 +158,7 @@ class LaneDataset(Dataset):
             # Set the x coordinates of the lane
             lanes[lane_idx, 5:5 + len(all_xs)] = all_xs
 
-        new_annotation = {'path': annotation['path'], 'label': lanes}
+        new_annotation = {'path': annotation['path'], 'label': lanes, 'old_annotation': annotation}
         return new_annotation
     
     def __filter_lane(self, lane):
@@ -222,8 +224,12 @@ class LaneDataset(Dataset):
         return xs_outside_image, xs_inside_image
 
     def __getitem__(self, idx):
-        return self.__annotations[idx]
-
+        item = self.annotations[idx]
+        img_org = cv2.imread(item['path'])
+        img = ToTensor()((img_org.copy()/255.0).astype(np.float32))
+        label = item['label']
+        return (img, label)
+    
     def __len__(self):
         return len(self.__annotations)
     
