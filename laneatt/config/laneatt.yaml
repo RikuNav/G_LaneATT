@@ -1,0 +1,53 @@
+backbone: resnet18
+
+# Feature Volume Channels
+feature_volume_channels: 64
+
+# Set the Anchor Steps
+anchor_steps:
+  y: 72
+  x: 128
+
+# Image Dimensions
+image_size:
+  width: 1280
+  height: 720
+
+# Angles for the Anchor Proposals (Sames as used in LineCNN)
+anchor_angles:
+  left: [72., 60., 49., 39., 30., 22.]
+  right: [108., 120., 131., 141., 150., 158.]
+  bottom: [165., 150., 141., 131., 120., 108., 100., 90., 80., 72., 60., 49., 39., 30., 15.]
+
+# Optimizer for training
+optimizer:
+  name: Adam
+  parameters:
+    lr: 0.0001
+    weight_decay: 0.0001
+
+# Scheduler for training
+lr_scheduler:
+  name: CosineAnnealingLR
+  parameters:
+    T_max: 166650
+
+# Epochs
+epochs: 15
+
+# Batch Size
+batch_size: 8
+
+# Dataset settings
+dataset:
+  train:
+    split: train+val
+    root: "datasets/tusimple_train/"
+
+  val:
+    split: val
+    root: "datasets/tusimple_train/"
+
+  test:
+    split: test
+    root: "datasets/tusimple_test/"
